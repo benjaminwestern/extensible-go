@@ -1,6 +1,8 @@
 [tools]
-go = "1.26.3"
+go = "latest"
 hk = "latest"
+pkl = "latest"
+"npm:@kitlangton/motel" = "latest"
 "go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint" = { version = "latest" }
 "go:mvdan.cc/gofumpt" = { version = "latest" }
 
@@ -61,7 +63,16 @@ run = "./bench.sh"
 
 [tasks."cli:smoke"]
 description = "Smoke test the CLI help and core feature path"
-run = "go build -o /tmp/extensible-go . && /tmp/extensible-go <<'EOF'\nslots\ncommands\ncheck dangerous\nrun hello Ben\nvalidate\nreload\nquit\nEOF"
+run = "tmpdir=$(mktemp -d) && trap 'rm -rf \"$tmpdir\"' EXIT && go build -o \"$tmpdir/extensible-go\" . && \"$tmpdir/extensible-go\" <<'EOF'\nslots\ncommands\ncheck dangerous\nrun hello Ben\nvalidate\nreload\nquit\nEOF"
+
+[tasks."cli:demo"]
+description = "Run the scripted CLI onboarding demo"
+run = "tmpdir=$(mktemp -d) && trap 'rm -rf \"$tmpdir\"' EXIT && go build -o \"$tmpdir/extensible-go\" . && \"$tmpdir/extensible-go\" <<'EOF'\nslots\ncommands\ncheck harmless\ncheck dangerous\nrun hello Ben\nrun check delete-all\nemit input dangerous\nvalidate\nreload\nquit\nEOF"
+
+[tasks.demo]
+description = "Run the scripted CLI onboarding demo"
+depends = ["cli:demo"]
+run = "true"
 
 [tasks."check:repo:mise"]
 description = "Validate the local mise configuration"

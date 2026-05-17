@@ -24,13 +24,40 @@ The current demo is strong enough to show:
 
 ## Quick start
 
+Install the repo-local tools, then run the scripted demo:
+
 ```bash
-mise run check
+mise trust       # only needed if mise asks you to trust this config
+mise install     # installs Go, hk, pkl, motel, golangci-lint, and gofumpt
+mise run demo
+```
+
+The demo builds a temporary binary and drives the CLI through the core path. The
+important proof is that Lua wraps a Go-owned policy seam, adds commands, and can
+validate and reload safely:
+
+```text
+core.policy
+check - Ask the current core.policy whether an action is allowed
+hello - Say hello from a Lua feature pack
+allow=true reason="allowed by Go default: harmless"
+allow=false reason="blocked by Lua safety policy"
+hello Ben from Lua
+allow= false reason= blocked by Lua safety policy
+event input: dangerous allow= false reason= blocked by Lua safety policy
+validate ok
+reload ok
+bye
+```
+
+To run the app yourself:
+
+```bash
 go build -o extensible-go .
 ./extensible-go
 ```
 
-Try the interactive commands:
+Try these interactive commands:
 
 ```text
 slots
@@ -56,6 +83,92 @@ Enable human-readable structured logs:
 ```bash
 ./extensible-go -debug-log
 ```
+
+## First safe Lua change
+
+The smallest useful change is to edit the Lua command text without rebuilding
+Go. In `features/hello/init.lua`, change:
+
+```lua
+ctx.print("hello", who, "from Lua")
+```
+
+to something like:
+
+```lua
+ctx.print("hello", who, "from my edited Lua")
+```
+
+Then validate and reload from the running CLI:
+
+```text
+validate
+reload
+run hello Ben
+```
+
+Expected result:
+
+```text
+validate ok
+reload ok
+hello Ben from my edited Lua
+```
+
+That is the maintainer path this repo is trying to prove: a local feature pack
+can change behaviour, validation checks it first, and reload applies it without
+rebuilding the Go host.
+
+## Break it safely
+
+Recoverability is part of the demo. This command copies the feature pack to
+`/tmp`, intentionally breaks the copy, and proves startup refuses invalid Lua
+without touching the repo files:
+
+```bash
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+cp -R features "$tmpdir/features"
+printf '\nthis is not lua\n' >> "$tmpdir/features/hello/init.lua"
+go build -o "$tmpdir/extensible-go" .
+"$tmpdir/extensible-go" -lua-dir "$tmpdir/features"
+```
+
+Expected result: startup prints a structured `startup failed` diagnostic and
+refuses to run the invalid Lua. The normal repo feature pack still works:
+
+```bash
+mise run demo
+```
+
+## Feature pack map
+
+| Path | Purpose |
+| --- | --- |
+| `features/init.lua` | Loads feature packs in an explicit order. |
+| `features/safety/init.lua` | Wraps `core.policy` to block dangerous actions. |
+| `features/hello/init.lua` | Registers the `hello` and `check` Lua commands. |
+
+## Troubleshooting setup
+
+If the first command fails before Go code runs, refresh the local toolchain and
+validate the repo wiring:
+
+```bash
+mise doctor
+mise install
+mise run mise:validate
+mise run hk:validate
+hk --version
+pkl --version
+go version
+motel status
+```
+
+`hk` validates `hk.pkl`; `pkl` is needed because hk evaluates that Pkl config.
+Motel is the local OpenTelemetry receiver/query tool used by the observability
+example. All are declared in `mise.toml` so `mise install` should provision
+them.
 
 ## Why this exists
 
@@ -213,12 +326,19 @@ The demo records spans for the important Go -> Lua boundaries:
 
 ## Motel validation
 
-Motel was used as the local evidence loop for this demo. With `-otel` enabled,
-the app exports JSON OTLP traces and slog records to motel, and the motel query
-API verifies that the Go -> Lua boundaries appear as spans.
+Motel is the local evidence loop for the observability part of this demo. The
+normal CLI output proves the product behaviour; Motel proves the host emits
+useful runtime evidence at the Go -> Lua boundaries. That matters because an
+extension host needs debuggable failures: maintainers should be able to see
+which reload, Lua file, command, event, or policy call produced a problem.
+
+`mise install` provisions the `motel` CLI from `mise.toml`. With `-otel`
+enabled, the app exports JSON OTLP traces and slog records to Motel. The Motel
+query API then verifies that expected boundaries appear as spans and logs.
 
 ```bash
 motel start
+go build -o extensible-go .
 ./extensible-go -otel -service extensible-go <<'EOF'
 check dangerous
 run hello Ben
@@ -229,21 +349,58 @@ EOF
 
 curl 'http://127.0.0.1:27686/api/services'
 curl 'http://127.0.0.1:27686/api/traces/search?service=extensible-go&limit=5'
+motel traces extensible-go 5
+motel logs extensible-go
 ```
 
-If you use the TUI, switch to the `extensible-go` service with `[` or `]`, then
-press `r` to refresh and `enter` to drill into a trace.
+Use Motel when you change diagnostics, OpenTelemetry wiring, reload behaviour,
+or Go -> Lua call boundaries. It should answer: did the operation produce a
+trace, did the span name match the boundary, and did any structured log include
+the diagnostic fields needed to debug it later?
+
+Motel stores local telemetry in `.motel-data/`, which is gitignored. Stop the
+local daemon when you are done:
+
+```bash
+motel stop
+```
+
+If you use the TUI, run `motel tui`, switch to the `extensible-go` service with
+`[` or `]`, then press `r` to refresh and `enter` to drill into a trace.
 
 ## Development workflow
 
-This repo uses local `mise`, `golangci-lint`, and `hk` wiring copied from the
-`data-refinery` workflow:
+This repo uses local `mise`, `golangci-lint`, `hk`, and `pkl` wiring. Start with
+the path that matches your change:
 
 ```bash
-mise run go:fmt       # apply gofumpt/goimports via golangci-lint fmt
-mise run go:lint      # run the configured linter set
-mise run check        # fmt, lint, vet, smoke, tests, race, hk/mise validation
-mise run hk:install   # optional: install git hooks
+mise run demo          # run the scripted first-value demo
+mise run check:quick   # fast local check before small edits
+mise run check         # fmt, lint, vet, smoke, tests, race, hk/mise validation
+```
+
+For Lua feature changes:
+
+```bash
+mise run demo          # prove the current feature pack still loads
+./extensible-go        # use validate and reload while editing features/*.lua
+```
+
+For Go host changes:
+
+```bash
+mise run go:fmt        # apply gofumpt/goimports via golangci-lint fmt
+mise run go:lint       # run the configured linter set
+mise run tests:go      # run Go tests without the race detector
+mise run go:race       # run Go tests with the race detector
+```
+
+For repo checks and hooks:
+
+```bash
+mise run mise:validate # validate local mise tasks
+mise run hk:validate   # validate hk.pkl
+mise run hk:install    # optional: install git hooks
 ```
 
 Run extension-shape benchmarks with:
