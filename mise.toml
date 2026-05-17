@@ -1,0 +1,132 @@
+[tools]
+go = "1.26.3"
+hk = "latest"
+"go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint" = { version = "latest" }
+"go:mvdan.cc/gofumpt" = { version = "latest" }
+
+[tasks."mise:validate"]
+description = "Validate the local mise task configuration"
+run = "mise tasks ls --local >/dev/null"
+
+[tasks."go:build"]
+description = "Build the CLI binary"
+run = "go build -o extensible-go ."
+
+[tasks.build]
+description = "Build the CLI binary"
+depends = ["go:build"]
+run = "true"
+
+[tasks."tests:go"]
+description = "Run the Go test suite"
+run = "go test ./..."
+
+[tasks."go:test"]
+description = "Run the Go test suite"
+depends = ["tests:go"]
+run = "true"
+
+[tasks.test]
+description = "Run the Go test suite"
+depends = ["tests:go"]
+run = "true"
+
+[tasks."go:race"]
+description = "Run the Go test suite with the race detector"
+run = "go test -race ./..."
+
+[tasks."go:vet"]
+description = "Run go vet"
+run = "go vet ./..."
+
+[tasks."go:fmt"]
+description = "Apply Go formatters defined in .golangci.yaml"
+run = "golangci-lint fmt"
+
+[tasks."go:fmt:check"]
+description = "Check Go formatting against .golangci.yaml"
+run = "golangci-lint fmt --diff"
+
+[tasks."go:lint"]
+description = "Run golangci-lint using .golangci.yaml"
+run = "golangci-lint run"
+
+[tasks."bench:policy"]
+description = "Run policy extension-shape benchmarks"
+run = "BENCH=BenchmarkPolicyCheck ./bench.sh"
+
+[tasks."bench:all"]
+description = "Run all extension-shape benchmarks"
+run = "./bench.sh"
+
+[tasks."cli:smoke"]
+description = "Smoke test the CLI help and core feature path"
+run = "go build -o /tmp/extensible-go . && /tmp/extensible-go <<'EOF'\nslots\ncommands\ncheck dangerous\nrun hello Ben\nvalidate\nreload\nquit\nEOF"
+
+[tasks."check:repo:mise"]
+description = "Validate the local mise configuration"
+depends = ["mise:validate"]
+run = "true"
+
+[tasks."check:repo:hk"]
+description = "Validate the hk configuration"
+depends = ["hk:validate"]
+run = "true"
+
+[tasks."check:quick"]
+description = "Run the fast local verification suite"
+depends = [
+  "check:repo:mise",
+  "check:repo:hk",
+  "go:fmt:check",
+  "go:lint",
+  "go:vet",
+  "cli:smoke",
+]
+run = "true"
+
+[tasks.check]
+description = "Run the main local verification suite"
+depends = ["check:quick", "tests:go", "go:race"]
+run = "true"
+
+[tasks."check:ci"]
+description = "Run the local CI-equivalent verification suite"
+depends = ["check"]
+run = "true"
+
+[tasks."hk:validate"]
+description = "Validate the hk configuration"
+run = "hk validate"
+
+[tasks."hk:check"]
+description = "Run the default hk check profile"
+run = "hk check"
+
+[tasks."hk:check:all"]
+description = "Run hk checks against the full tracked workspace"
+run = "hk check --all"
+
+[tasks."hk:fix"]
+description = "Run the default hk fix profile"
+run = "hk fix"
+
+[tasks."hk:fix:all"]
+description = "Run hk fixes against the full tracked workspace"
+run = "hk fix --all"
+
+[tasks."hk:pre-commit"]
+description = "Run the hk pre-commit hook locally"
+run = "hk run pre-commit"
+
+[tasks."hk:pre-push"]
+description = "Run the hk pre-push hook locally"
+run = "hk run pre-push"
+
+[tasks."hk:test"]
+description = "Run hk step self-tests"
+run = "hk test"
+
+[tasks."hk:install"]
+description = "Install hk git hooks for this repository"
+run = "HK_MISE=1 hk install --mise"
